@@ -17,9 +17,11 @@ const MAX_SEEN_IDS = 5000;
 
 function requireEnv(name) {
   const value = process.env[name];
+
   if (!value || !value.trim()) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
+
   return value.trim();
 }
 
@@ -28,9 +30,10 @@ const CONFIG = {
   guildId: requireEnv("DISCORD_GUILD_ID"),
   channelId: requireEnv("PDA_CHANNEL_ID"),
   sharedSecret: requireEnv("STALKERNET_BRIDGE_SECRET"),
-  serverLabel: (process.env.PDA_SERVER_LABEL || "L.S.P.").trim().slice(0, 80),
   port: Number.parseInt(process.env.PORT || "3000", 10),
-  dataDir: path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data")),
+  dataDir: path.resolve(
+    process.env.DATA_DIR || path.join(process.cwd(), "data")
+  ),
 };
 
 if (!Number.isInteger(CONFIG.port) || CONFIG.port < 1 || CONFIG.port > 65535) {
@@ -39,6 +42,7 @@ if (!Number.isInteger(CONFIG.port) || CONFIG.port < 1 || CONFIG.port > 65535) {
 
 const seenIdsPath = path.join(CONFIG.dataDir, "seen_message_ids.json");
 const seenIds = new Map();
+
 let targetChannel = null;
 let shuttingDown = false;
 
@@ -59,6 +63,15 @@ function timingSafeEqualText(left, right) {
 
 async function ensureDataDir() {
   await fs.mkdir(CONFIG.dataDir, { recursive: true });
+}
+
+function trimSeenIds() {
+  const ordered = [...seenIds.entries()].sort((a, b) => a[1] - b[1]);
+  const removeCount = Math.max(0, ordered.length - MAX_SEEN_IDS);
+
+  for (let index = 0; index < removeCount; index += 1) {
+    seenIds.delete(ordered[index][0]);
+  }
 }
 
 async function loadSeenIds() {
@@ -84,15 +97,6 @@ async function loadSeenIds() {
   }
 }
 
-function trimSeenIds() {
-  const ordered = [...seenIds.entries()].sort((a, b) => a[1] - b[1]);
-  const removeCount = Math.max(0, ordered.length - MAX_SEEN_IDS);
-
-  for (let index = 0; index < removeCount; index += 1) {
-    seenIds.delete(ordered[index][0]);
-  }
-}
-
 async function saveSeenIds() {
   trimSeenIds();
 
@@ -102,7 +106,12 @@ async function saveSeenIds() {
 
   const tempPath = `${seenIdsPath}.tmp`;
 
-  await fs.writeFile(tempPath, JSON.stringify({ ids }, null, 2), "utf8");
+  await fs.writeFile(
+    tempPath,
+    JSON.stringify({ ids }, null, 2),
+    "utf8"
+  );
+
   await fs.rename(tempPath, seenIdsPath);
 }
 
@@ -123,7 +132,10 @@ function readRequestBody(request) {
       chunks.push(chunk);
     });
 
-    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    request.on("end", () => {
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+
     request.on("error", reject);
   });
 }
@@ -151,20 +163,31 @@ function cleanText(value, maximumLength) {
 function normalizeIncomingMessage(message) {
   const id = cleanText(message?.Id ?? message?.id, 160);
   const author = cleanText(message?.Author ?? message?.author, 80);
-  const text = cleanText(message?.Text ?? message?.text, MAX_MESSAGE_TEXT_LENGTH);
-  const timeLabel = cleanText(message?.TimeLabel ?? message?.timeLabel, 32);
+  const text = cleanText(
+    message?.Text ?? message?.text,
+    MAX_MESSAGE_TEXT_LENGTH
+  );
+  const timeLabel = cleanText(
+    message?.TimeLabel ?? message?.timeLabel,
+    32
+  );
 
   if (!id || !author || !text) {
     return null;
   }
 
-  return { id, author, text, timeLabel };
+  return {
+    id,
+    author,
+    text,
+    timeLabel,
+  };
 }
 
 function formatDiscordMessage(message) {
   const time = message.timeLabel || new Date().toISOString().slice(11, 16);
 
-  return `☢️ КПК | ${time}\n[${message.author}] ${message.text}`;
+  return `☢️ STALKERNET • ${time}\n**${message.author}**\n> ${message.text}`;
 }
 
 async function ensureTargetChannel(client) {
@@ -181,7 +204,10 @@ async function ensureTargetChannel(client) {
   }
 
   targetChannel = channel;
-  log(`Discord target channel connected: guild=${channel.guildId}, channel=${channel.id}`);
+
+  log(
+    `Discord target channel connected: guild=${channel.guildId}, channel=${channel.id}`
+  );
 }
 
 async function publishMessage(message) {
@@ -195,7 +221,9 @@ async function publishMessage(message) {
 
   await targetChannel.send({
     content: formatDiscordMessage(message),
-    allowedMentions: { parse: [] },
+    allowedMentions: {
+      parse: [],
+    },
   });
 
   seenIds.set(message.id, Date.now());
@@ -214,7 +242,10 @@ async function handlePdaBatch(request, response) {
   try {
     rawBody = await readRequestBody(request);
   } catch (error) {
-    sendJson(response, 413, { ok: false, error: error.message });
+    sendJson(response, 413, {
+      ok: false,
+      error: error.message,
+    });
     return;
   }
 
@@ -223,26 +254,38 @@ async function handlePdaBatch(request, response) {
   try {
     payload = JSON.parse(rawBody);
   } catch {
-    sendJson(response, 400, { ok: false, error: "Invalid JSON body." });
+    sendJson(response, 400, {
+      ok: false,
+      error: "Invalid JSON body.",
+    });
     return;
   }
 
   const suppliedSecret = payload?.Secret ?? payload?.secret;
 
   if (!timingSafeEqualText(suppliedSecret, CONFIG.sharedSecret)) {
-    sendJson(response, 401, { ok: false, error: "Unauthorized." });
+    sendJson(response, 401, {
+      ok: false,
+      error: "Unauthorized.",
+    });
     return;
   }
 
   if (!targetChannel) {
-    sendJson(response, 503, { ok: false, error: "Discord channel is not ready." });
+    sendJson(response, 503, {
+      ok: false,
+      error: "Discord channel is not ready.",
+    });
     return;
   }
 
   const rawMessages = payload?.Messages ?? payload?.messages;
 
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
-    sendJson(response, 400, { ok: false, error: "Messages must be a non-empty array." });
+    sendJson(response, 400, {
+      ok: false,
+      error: "Messages must be a non-empty array.",
+    });
     return;
   }
 
@@ -262,7 +305,9 @@ async function handlePdaBatch(request, response) {
       const message = normalizeIncomingMessage(rawMessage);
 
       if (!message) {
-        throw new Error("One or more PDA messages are missing id, author, or text.");
+        throw new Error(
+          "One or more PDA messages are missing id, author, or text."
+        );
       }
 
       const result = await publishMessage(message);
@@ -284,7 +329,9 @@ async function handlePdaBatch(request, response) {
     return;
   }
 
-  log(`Published PDA batch: ${acceptedIds.length} accepted, ${duplicateCount} duplicate.`);
+  log(
+    `Published PDA batch: ${acceptedIds.length} accepted, ${duplicateCount} duplicate.`
+  );
 
   sendJson(response, 202, {
     ok: true,
@@ -317,7 +364,10 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  sendJson(response, 404, { ok: false, error: "Not found." });
+  sendJson(response, 404, {
+    ok: false,
+    error: "Not found.",
+  });
 });
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -350,7 +400,9 @@ async function shutdown(signal) {
   shuttingDown = true;
   log(`Received ${signal}; shutting down.`);
 
-  await new Promise((resolve) => server.close(resolve));
+  await new Promise((resolve) => {
+    server.close(resolve);
+  });
 
   client.destroy();
   process.exit(0);
