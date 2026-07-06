@@ -160,6 +160,16 @@ function cleanText(value, maximumLength) {
     .slice(0, maximumLength);
 }
 
+function escapeDiscordMarkdown(value) {
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/`/g, "\\`")
+    .replace(/~/g, "\\~")
+    .replace(/\|/g, "\\|");
+}
+
 function normalizeIncomingMessage(message) {
   const id = cleanText(message?.Id ?? message?.id, 160);
   const author = cleanText(message?.Author ?? message?.author, 80);
@@ -186,8 +196,10 @@ function normalizeIncomingMessage(message) {
 
 function formatDiscordMessage(message) {
   const time = message.timeLabel || new Date().toISOString().slice(11, 16);
+  const author = escapeDiscordMarkdown(message.author);
+  const text = escapeDiscordMarkdown(message.text);
 
-  return `☢️ STALKERNET • ${time}\n**${message.author}**\n> ${message.text}`;
+  return `☢️ STALKERNET • ${time}\n**${author}**\n**${text}**`;
 }
 
 async function ensureTargetChannel(client) {
