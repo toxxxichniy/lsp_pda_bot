@@ -195,11 +195,10 @@ function normalizeIncomingMessage(message) {
 }
 
 function formatDiscordMessage(message) {
-  const time = message.timeLabel || new Date().toISOString().slice(11, 16);
   const author = escapeDiscordMarkdown(message.author);
   const text = escapeDiscordMarkdown(message.text);
 
-  return `☢️ STALKERNET • ${time}\n**${author}**\n**${text}**`;
+  return `${author} : ${text}`;
 }
 
 async function ensureTargetChannel(client) {
