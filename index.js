@@ -64,6 +64,7 @@ async function ensureDataDir() {
 async function loadSeenIds() {
   try {
     const parsed = JSON.parse(await fs.readFile(seenIdsPath, "utf8"));
+
     if (!Array.isArray(parsed?.ids)) {
       return;
     }
@@ -94,9 +95,11 @@ function trimSeenIds() {
 
 async function saveSeenIds() {
   trimSeenIds();
+
   const ids = [...seenIds.entries()]
     .map(([id, at]) => ({ id, at }))
     .sort((a, b) => a.at - b.at);
+
   const tempPath = `${seenIdsPath}.tmp`;
 
   await fs.writeFile(tempPath, JSON.stringify({ ids }, null, 2), "utf8");
@@ -110,11 +113,13 @@ function readRequestBody(request) {
 
     request.on("data", (chunk) => {
       received += chunk.length;
+
       if (received > MAX_HTTP_BODY_BYTES) {
         reject(new Error("Request body exceeds the allowed size."));
         request.destroy();
         return;
       }
+
       chunks.push(chunk);
     });
 
@@ -125,11 +130,13 @@ function readRequestBody(request) {
 
 function sendJson(response, statusCode, body) {
   const payload = JSON.stringify(body);
+
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
     "Cache-Control": "no-store",
   });
+
   response.end(payload);
 }
 
@@ -154,26 +161,30 @@ function normalizeIncomingMessage(message) {
   return { id, author, text, timeLabel };
 }
 
-function formatDiscordMessage(message, serverLabel) {
+function formatDiscordMessage(message) {
   const time = message.timeLabel || new Date().toISOString().slice(11, 16);
-  return `☢️ **КПК • ${serverLabel} • ${time}**\n**${message.author}:** ${message.text}`;
+
+  return `☢️ КПК | ${time}\n[${message.author}] ${message.text}`;
 }
 
 async function ensureTargetChannel(client) {
   const channel = await client.channels.fetch(CONFIG.channelId);
+
   if (!channel || !channel.isTextBased() || typeof channel.send !== "function") {
     throw new Error("PDA_CHANNEL_ID is not a writable text channel.");
   }
 
   if (!channel.guildId || channel.guildId !== CONFIG.guildId) {
-    throw new Error(`PDA_CHANNEL_ID does not belong to DISCORD_GUILD_ID. Expected ${CONFIG.guildId}, got ${channel.guildId || "DM/unknown"}.`);
+    throw new Error(
+      `PDA_CHANNEL_ID does not belong to DISCORD_GUILD_ID. Expected ${CONFIG.guildId}, got ${channel.guildId || "DM/unknown"}.`
+    );
   }
 
   targetChannel = channel;
   log(`Discord target channel connected: guild=${channel.guildId}, channel=${channel.id}`);
 }
 
-async function publishMessage(message, serverLabel) {
+async function publishMessage(message) {
   if (seenIds.has(message.id)) {
     return { duplicate: true };
   }
@@ -183,12 +194,13 @@ async function publishMessage(message, serverLabel) {
   }
 
   await targetChannel.send({
-    content: formatDiscordMessage(message, serverLabel),
+    content: formatDiscordMessage(message),
     allowedMentions: { parse: [] },
   });
 
   seenIds.set(message.id, Date.now());
   await saveSeenIds();
+
   return { duplicate: false };
 }
 
@@ -198,6 +210,7 @@ const client = new Client({
 
 async function handlePdaBatch(request, response) {
   let rawBody;
+
   try {
     rawBody = await readRequestBody(request);
   } catch (error) {
@@ -206,6 +219,7 @@ async function handlePdaBatch(request, response) {
   }
 
   let payload;
+
   try {
     payload = JSON.parse(rawBody);
   } catch {
@@ -214,6 +228,7 @@ async function handlePdaBatch(request, response) {
   }
 
   const suppliedSecret = payload?.Secret ?? payload?.secret;
+
   if (!timingSafeEqualText(suppliedSecret, CONFIG.sharedSecret)) {
     sendJson(response, 401, { ok: false, error: "Unauthorized." });
     return;
@@ -225,40 +240,52 @@ async function handlePdaBatch(request, response) {
   }
 
   const rawMessages = payload?.Messages ?? payload?.messages;
+
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
     sendJson(response, 400, { ok: false, error: "Messages must be a non-empty array." });
     return;
   }
 
   if (rawMessages.length > MAX_BATCH_MESSAGES) {
-    sendJson(response, 400, { ok: false, error: `Batch limit is ${MAX_BATCH_MESSAGES}.` });
+    sendJson(response, 400, {
+      ok: false,
+      error: `Batch limit is ${MAX_BATCH_MESSAGES}.`,
+    });
     return;
   }
 
-  const serverLabel = cleanText(payload?.ServerLabel ?? payload?.serverLabel, 80) || CONFIG.serverLabel;
   const acceptedIds = [];
   let duplicateCount = 0;
 
   try {
     for (const rawMessage of rawMessages) {
       const message = normalizeIncomingMessage(rawMessage);
+
       if (!message) {
         throw new Error("One or more PDA messages are missing id, author, or text.");
       }
 
-      const result = await publishMessage(message, serverLabel);
+      const result = await publishMessage(message);
+
       acceptedIds.push(message.id);
+
       if (result.duplicate) {
         duplicateCount += 1;
       }
     }
   } catch (error) {
     log(`PDA batch failed: ${error.message}`);
-    sendJson(response, 502, { ok: false, error: "Discord publish failed. The server queue must retry this batch." });
+
+    sendJson(response, 502, {
+      ok: false,
+      error: "Discord publish failed. The server queue must retry this batch.",
+    });
+
     return;
   }
 
   log(`Published PDA batch: ${acceptedIds.length} accepted, ${duplicateCount} duplicate.`);
+
   sendJson(response, 202, {
     ok: true,
     acceptedIds,
@@ -267,7 +294,10 @@ async function handlePdaBatch(request, response) {
 }
 
 const server = http.createServer(async (request, response) => {
-  const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+  const url = new URL(
+    request.url,
+    `http://${request.headers.host || "localhost"}`
+  );
 
   if (request.method === "GET" && url.pathname === "/health") {
     sendJson(response, targetChannel ? 200 : 503, {
@@ -278,6 +308,7 @@ const server = http.createServer(async (request, response) => {
       channelId: CONFIG.channelId,
       seenMessageIds: seenIds.size,
     });
+
     return;
   }
 
@@ -292,27 +323,35 @@ const server = http.createServer(async (request, response) => {
 client.once(Events.ClientReady, async (readyClient) => {
   try {
     await ensureTargetChannel(readyClient);
+
     server.listen(CONFIG.port, "0.0.0.0", () => {
       log(`HTTP bridge listening on port ${CONFIG.port}.`);
     });
   } catch (error) {
-    console.error(`[STALKERNET-DISCORD] Startup failed: ${error.stack || error.message}`);
+    console.error(
+      `[STALKERNET-DISCORD] Startup failed: ${error.stack || error.message}`
+    );
+
     process.exit(1);
   }
 });
 
 client.on(Events.Error, (error) => {
-  console.error(`[STALKERNET-DISCORD] Discord client error: ${error.stack || error.message}`);
+  console.error(
+    `[STALKERNET-DISCORD] Discord client error: ${error.stack || error.message}`
+  );
 });
 
 async function shutdown(signal) {
   if (shuttingDown) {
     return;
   }
+
   shuttingDown = true;
   log(`Received ${signal}; shutting down.`);
 
   await new Promise((resolve) => server.close(resolve));
+
   client.destroy();
   process.exit(0);
 }
@@ -325,6 +364,9 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
   await loadSeenIds();
   await client.login(CONFIG.token);
 })().catch((error) => {
-  console.error(`[STALKERNET-DISCORD] Fatal startup error: ${error.stack || error.message}`);
+  console.error(
+    `[STALKERNET-DISCORD] Fatal startup error: ${error.stack || error.message}`
+  );
+
   process.exit(1);
 });
